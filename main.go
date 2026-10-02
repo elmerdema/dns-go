@@ -2,41 +2,58 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"net"
 	"strings"
-)
 
-type Serve interface {
-	ServeDNS(writer net.Conn, message string)
-}
+	"github.com/miekg/dns"
+)
 
 type DNSHandler struct {
 }
 
-func (d DNSHandler) ServeDNS(writer net.Conn, message string) {
-	question := strings.TrimSpace(message)
+func (d DNSHandler) ServeDNS(writer dns.ResponseWriter, request *dns.Msg) {
+	response := new(dns.Msg)
+	response.SetReply(request)
+	response.Authoritative = true
 
-	ip, found := sites[question]
-	if found {
-		fmt.Fprintf(writer, "The ip for %s has been found ", ip)
-	} else {
-		fmt.Printf("No ip found for %s in %s \n", ip, question)
+	for _, question := range request.Question {
+		if question.Qtype != dns.TypeA {
+			continue
+		}
+
+		name := strings.ToLower(question.Name)
+		ip, found := sites[name]
+		if found {
+			fmt.Printf("The ip for %s has been found\n", ip)
+			record := &dns.A{
+				Hdr: dns.RR_Header{
+					Name:   name,
+					Rrtype: dns.TypeA,
+					Class:  dns.ClassINET,
+					Ttl:    60,
+				},
+				A: net.ParseIP(ip),
+			}
+			response.Answer = append(response.Answer, record)
+			writer.WriteMsg(response)
+		} else {
+			fmt.Printf("No ip found for %s\n", name)
+		}
 	}
-}
-
-func Lookup(s Serve, conn net.Conn, message string) {
-	s.ServeDNS(conn, message)
-
 }
 
 func main() {
 	initSites()
-	addr, _ := net.ResolveUDPAddr("udp", "127.0.0.1")
-	conn, _ := net.ListenUDP("udp", addr)
-	defer conn.Close()
+	mux := dns.NewServeMux()
+	mux.Handle(".", DNSHandler{})
 
-	buffer := make([]byte, 1024)
-	n, _, _ := conn.ReadFromUDP(buffer)
-	handler := DNSHandler{}
-	handler.ServeDNS(conn, string(buffer[:n]))
+	server := &dns.Server{
+		Addr:    "127.0.0.1:8503",
+		Net:     "udp",
+		Handler: mux,
+	}
+	if err := server.ListenAndServe(); err != nil {
+		log.Fatal(err)
+	}
 }
