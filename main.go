@@ -45,6 +45,14 @@ func (d DNSHandler) ServeDNS(writer dns.ResponseWriter, request *dns.Msg) {
 
 func main() {
 	initSites()
+	client, ctx := initRedisClient()
+
+	for key, value := range sites {
+		setElement(client, ctx, key, value)
+		fmt.Printf("%s -> %s\n", key, storeElement(ctx, client, key))
+
+	}
+
 	mux := dns.NewServeMux()
 	mux.Handle(".", DNSHandler{})
 
