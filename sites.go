@@ -8,6 +8,10 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+// terst redis connection
+//docker run --name redis-dev \  -p 6379:6379 \  -d redis:7
+// docker exec -it redis-dev redis-cli ping
+
 type Record struct {
 	Name  string
 	Type  uint16
@@ -50,10 +54,6 @@ func normalizeName(name string) string {
 	}
 	return name
 }
-
-// terst redis connection
-//docker run --name redis-dev \  -p 6379:6379 \  -d redis:7
-// docker exec -it redis-dev redis-cli ping
 
 func initRedisClient() (*redis.Client, context.Context) {
 	rdb := redis.NewClient(&redis.Options{
