@@ -2,18 +2,53 @@ package main
 
 import (
 	"context"
+	"strings"
 
+	"github.com/miekg/dns"
 	"github.com/redis/go-redis/v9"
 )
 
-var sites map[string]string
+type Record struct {
+	Name  string
+	Type  uint16
+	TTL   uint32
+	Value string
+}
+
+var records map[string][]Record
 
 func initSites() {
-	sites = map[string]string{
-		"go.dev.":     "127.0.0.1",
-		"google.com.": "127.0.0.2",
-		"apple.com.":  "127.0.0.3",
+	records = make(map[string][]Record)
+	addRecord := func(record Record) {
+		record.Name = normalizeName(record.Name)
+		if record.TTL == 0 {
+			record.TTL = 60
+		}
+		records[record.Name] = append(records[record.Name], record)
 	}
+
+	addRecord(Record{Name: "go.dev.", Type: dns.TypeA, TTL: 60, Value: "127.0.0.1"})
+	addRecord(Record{Name: "google.com.", Type: dns.TypeA, TTL: 60, Value: "127.0.0.2"})
+	addRecord(Record{Name: "apple.com.", Type: dns.TypeA, TTL: 60, Value: "127.0.0.3"})
+	addRecord(Record{Name: "example.com.", Type: dns.TypeAAAA, TTL: 300, Value: "2001:db8::1"})
+	addRecord(Record{Name: "www.example.com.", Type: dns.TypeCNAME, TTL: 300, Value: "example.com."})
+	addRecord(Record{Name: "example.com.", Type: dns.TypeTXT, TTL: 300, Value: "managed by dns-go"})
+	addRecord(Record{Name: "example.com.", Type: dns.TypeMX, TTL: 300, Value: "10 mail.example.com."})
+	addRecord(Record{Name: "example.com.", Type: dns.TypeNS, TTL: 300, Value: "ns1.example.com."})
+	addRecord(Record{
+		Name:  "example.com.",
+		Type:  dns.TypeSOA,
+		TTL:   300,
+		Value: "ns1.example.com. hostmaster.example.com. 1 3600 600 86400 300",
+	})
+}
+
+func normalizeName(name string) string {
+	name = strings.ToLower(strings.TrimSpace(name))
+	if !strings.HasSuffix(name, ".") {
+		name += "."
+	}
+	return name
 }
 
 // terst redis connection
