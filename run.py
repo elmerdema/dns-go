@@ -14,7 +14,6 @@ QUERY = sys.argv[1] if len(sys.argv) > 1 else "go.dev"
 PROJECT_DIR = Path(__file__).resolve().parent
 
 
-
 def encode_name(name):
     labels = name.rstrip(".").split(".")
     return b"".join(bytes([len(label)]) + label.encode() for label in labels) + b"\0"

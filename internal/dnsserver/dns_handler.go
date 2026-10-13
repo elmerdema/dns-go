@@ -1,6 +1,8 @@
-package main
+package dnsserver
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -8,12 +10,19 @@ import (
 	"strings"
 
 	"github.com/miekg/dns"
+	"github.com/redis/go-redis/v9"
 )
 
-type DNSHandler struct {
+type Handler struct {
+	ctx   context.Context
+	store RecordStore
 }
 
-func (d DNSHandler) ServeDNS(writer dns.ResponseWriter, request *dns.Msg) {
+func NewHandler(ctx context.Context, store RecordStore) Handler {
+	return Handler{ctx: ctx, store: store}
+}
+
+func (h Handler) ServeDNS(writer dns.ResponseWriter, request *dns.Msg) {
 	response := new(dns.Msg)
 	response.SetReply(request)
 	response.Authoritative = true
@@ -23,36 +32,39 @@ func (d DNSHandler) ServeDNS(writer dns.ResponseWriter, request *dns.Msg) {
 	unsupportedType := false
 
 	for _, question := range request.Question {
-		name := normalizeName(question.Name)
+		name := NormalizeName(question.Name)
 		if !supportedType(question.Qtype) {
 			unsupportedType = true
 			continue
 		}
 
-		nameRecords, found := records[name]
-		if !found {
-			unknownName = true
-			continue
-		}
-
-		for _, record := range nameRecords {
-			if record.Type != question.Qtype {
+		record, err := lookupRecord(h.ctx, h.store, name, question.Qtype)
+		if err != nil {
+			if errors.Is(err, redis.Nil) {
+				exists, existsErr := recordNameExists(h.ctx, h.store, name)
+				if existsErr != nil {
+					log.Printf("failed to check %s in Redis: %v", name, existsErr)
+					response.Rcode = dns.RcodeServerFailure
+					break
+				}
+				if !exists {
+					unknownName = true
+				}
 				continue
 			}
-
-			rr, err := recordRR(record)
-			if err != nil {
-				log.Printf("invalid %s record for %s: %v", dns.TypeToString[record.Type], name, err)
-				response.Rcode = dns.RcodeServerFailure
-				break
-			}
-
-			foundName = true
-			response.Answer = append(response.Answer, rr)
-		}
-		if response.Rcode == dns.RcodeServerFailure {
+			log.Printf("failed to read %s from Redis: %v", RecordKey(name, question.Qtype), err)
+			response.Rcode = dns.RcodeServerFailure
 			break
 		}
+
+		rr, err := recordRR(record)
+		if err != nil {
+			log.Printf("invalid %s record for %s: %v", dns.TypeToString[record.Type], name, err)
+			response.Rcode = dns.RcodeServerFailure
+			break
+		}
+		foundName = true
+		response.Answer = append(response.Answer, rr)
 	}
 
 	if response.Rcode == dns.RcodeSuccess {
@@ -79,12 +91,7 @@ func supportedType(qtype uint16) bool {
 }
 
 func recordRR(record Record) (dns.RR, error) {
-	header := dns.RR_Header{
-		Name:   normalizeName(record.Name),
-		Rrtype: record.Type,
-		Class:  dns.ClassINET,
-		Ttl:    record.TTL,
-	}
+	header := dns.RR_Header{Name: NormalizeName(record.Name), Rrtype: record.Type, Class: dns.ClassINET, Ttl: record.TTL}
 
 	switch record.Type {
 	case dns.TypeA:
@@ -100,7 +107,7 @@ func recordRR(record Record) (dns.RR, error) {
 		}
 		return &dns.AAAA{Hdr: header, AAAA: address}, nil
 	case dns.TypeCNAME:
-		return &dns.CNAME{Hdr: header, Target: normalizeName(record.Value)}, nil
+		return &dns.CNAME{Hdr: header, Target: NormalizeName(record.Value)}, nil
 	case dns.TypeTXT:
 		return &dns.TXT{Hdr: header, Txt: []string{record.Value}}, nil
 	case dns.TypeMX:
@@ -112,9 +119,9 @@ func recordRR(record Record) (dns.RR, error) {
 		if err != nil {
 			return nil, fmt.Errorf("invalid MX priority %q: %w", fields[0], err)
 		}
-		return &dns.MX{Hdr: header, Preference: uint16(priority), Mx: normalizeName(fields[1])}, nil
+		return &dns.MX{Hdr: header, Preference: uint16(priority), Mx: NormalizeName(fields[1])}, nil
 	case dns.TypeNS:
-		return &dns.NS{Hdr: header, Ns: normalizeName(record.Value)}, nil
+		return &dns.NS{Hdr: header, Ns: NormalizeName(record.Value)}, nil
 	case dns.TypeSOA:
 		fields := strings.Fields(record.Value)
 		if len(fields) != 7 {
@@ -128,42 +135,8 @@ func recordRR(record Record) (dns.RR, error) {
 			}
 			values[index] = uint32(value)
 		}
-		return &dns.SOA{
-			Hdr:     header,
-			Ns:      normalizeName(fields[0]),
-			Mbox:    normalizeName(fields[1]),
-			Serial:  values[0],
-			Refresh: values[1],
-			Retry:   values[2],
-			Expire:  values[3],
-			Minttl:  values[4],
-		}, nil
+		return &dns.SOA{Hdr: header, Ns: NormalizeName(fields[0]), Mbox: NormalizeName(fields[1]), Serial: values[0], Refresh: values[1], Retry: values[2], Expire: values[3], Minttl: values[4]}, nil
 	default:
 		return nil, fmt.Errorf("unsupported record type %d", record.Type)
-	}
-}
-
-func main() {
-	initSites()
-	client, ctx := initRedisClient()
-
-	for key, nameRecords := range records {
-		for _, record := range nameRecords {
-			value := fmt.Sprintf("%s %s", dns.TypeToString[record.Type], record.Value)
-			setElement(client, ctx, key+dns.TypeToString[record.Type], value)
-			fmt.Printf("%s -> %s\n", key, storeElement(ctx, client, key+dns.TypeToString[record.Type]))
-		}
-	}
-
-	mux := dns.NewServeMux()
-	mux.Handle(".", DNSHandler{})
-
-	server := &dns.Server{
-		Addr:    "127.0.0.1:8503",
-		Net:     "udp",
-		Handler: mux,
-	}
-	if err := server.ListenAndServe(); err != nil {
-		log.Fatal(err)
 	}
 }
