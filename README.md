@@ -34,19 +34,36 @@ Run the DNS server:
 go run ./cmd/dns-go
 ```
 
-The server listens on UDP `127.0.0.1:8503`. Query it with:
+The server listens on UDP `127.0.0.1:8503` by default. Runtime settings can be
+provided through environment variables:
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `DNS_LISTEN_ADDR` | `127.0.0.1:8503` | UDP listen address |
+| `DNS_REDIS_ADDR` | `localhost:6379` | Redis address |
+| `DNS_REDIS_PASSWORD` | empty | Redis password |
+| `DNS_REDIS_DB` | `0` | Redis database number |
+| `DNS_DEFAULT_TTL` | `300` | TTL used when a record has TTL `0` |
+| `DNS_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, or `error` |
+| `DNS_RECURSION_ENABLED` | `false` | Advertise recursion availability |
+| `DNS_ZONE_FILE` | empty | Optional JSON file containing a `Record` array |
+| `DNS_SHUTDOWN_TIMEOUT` | `5s` | Graceful shutdown timeout |
+
+For example:
+
+```text
+DNS_LISTEN_ADDR=0.0.0.0:8503 DNS_REDIS_ADDR=redis:6379 go run ./cmd/dns-go
+```
+
+The server handles `SIGINT` and `SIGTERM`, stops accepting DNS requests within
+the configured timeout, and closes the Redis client before exiting.
+
+Query it with:
 
 ```text
 dig @127.0.0.1 -p 8503 go.dev A
 ```
-
-On Windows, run the included smoke test with:
-
-```text
-python run.py
-```
-
-Run the Go test suite:
+Run the Go tests:
 
 ```text
 go test ./...

@@ -94,12 +94,16 @@ func lookupRecord(ctx context.Context, store RecordStore, name string, recordTyp
 	return decodeRecord(value)
 }
 
-func InitRedisClient() (*redis.Client, context.Context) {
+func InitRedisClientWithConfig(config Config) (*redis.Client, context.Context) {
 	client := redis.NewClient(&redis.Options{
-		Addr:     "localhost:6379",
-		Password: "",
-		DB:       0,
+		Addr:     config.RedisAddr,
+		Password: config.RedisPassword,
+		DB:       config.RedisDB,
 		Protocol: 2,
 	})
 	return client, context.Background()
+}
+
+func InitRedisClient() (*redis.Client, context.Context) {
+	return InitRedisClientWithConfig(DefaultConfig())
 }

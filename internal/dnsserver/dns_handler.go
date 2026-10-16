@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"net"
 	"strconv"
 	"strings"
@@ -14,18 +14,24 @@ import (
 )
 
 type Handler struct {
-	ctx   context.Context
-	store RecordStore
+	ctx              context.Context
+	store            RecordStore
+	recursionEnabled bool
 }
 
 func NewHandler(ctx context.Context, store RecordStore) Handler {
-	return Handler{ctx: ctx, store: store}
+	return NewHandlerWithConfig(ctx, store, DefaultConfig())
+}
+
+func NewHandlerWithConfig(ctx context.Context, store RecordStore, config Config) Handler {
+	return Handler{ctx: ctx, store: store, recursionEnabled: config.RecursionEnabled}
 }
 
 func (h Handler) ServeDNS(writer dns.ResponseWriter, request *dns.Msg) {
 	response := new(dns.Msg)
 	response.SetReply(request)
 	response.Authoritative = true
+	response.RecursionAvailable = h.recursionEnabled
 
 	foundName := false
 	unknownName := false
@@ -43,7 +49,7 @@ func (h Handler) ServeDNS(writer dns.ResponseWriter, request *dns.Msg) {
 			if errors.Is(err, redis.Nil) {
 				exists, existsErr := recordNameExists(h.ctx, h.store, name)
 				if existsErr != nil {
-					log.Printf("failed to check %s in Redis: %v", name, existsErr)
+					slog.Error("failed to check name in Redis", "name", name, "error", existsErr)
 					response.Rcode = dns.RcodeServerFailure
 					break
 				}
@@ -52,14 +58,14 @@ func (h Handler) ServeDNS(writer dns.ResponseWriter, request *dns.Msg) {
 				}
 				continue
 			}
-			log.Printf("failed to read %s from Redis: %v", RecordKey(name, question.Qtype), err)
+			slog.Error("failed to read record from Redis", "key", RecordKey(name, question.Qtype), "error", err)
 			response.Rcode = dns.RcodeServerFailure
 			break
 		}
 
 		rr, err := recordRR(record)
 		if err != nil {
-			log.Printf("invalid %s record for %s: %v", dns.TypeToString[record.Type], name, err)
+			slog.Error("invalid DNS record", "type", dns.TypeToString[record.Type], "name", name, "error", err)
 			response.Rcode = dns.RcodeServerFailure
 			break
 		}
@@ -77,7 +83,7 @@ func (h Handler) ServeDNS(writer dns.ResponseWriter, request *dns.Msg) {
 	}
 
 	if err := writer.WriteMsg(response); err != nil {
-		log.Printf("failed to write DNS response: %v", err)
+		slog.Error("failed to write DNS response", "error", err)
 	}
 }
 
