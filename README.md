@@ -34,12 +34,12 @@ Run the DNS server:
 go run ./cmd/dns-go
 ```
 
-The server listens on UDP `127.0.0.1:8503` by default. Runtime settings can be
-provided through environment variables:
+The server listens on both UDP and TCP at `127.0.0.1:8503` by default. Runtime
+settings can be provided through environment variables:
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `DNS_LISTEN_ADDR` | `127.0.0.1:8503` | UDP listen address |
+| `DNS_LISTEN_ADDR` | `127.0.0.1:8503` | UDP and TCP listen address |
 | `DNS_REDIS_ADDR` | `localhost:6379` | Redis address |
 | `DNS_REDIS_PASSWORD` | empty | Redis password |
 | `DNS_REDIS_DB` | `0` | Redis database number |
@@ -55,8 +55,9 @@ For example:
 DNS_LISTEN_ADDR=0.0.0.0:8503 DNS_REDIS_ADDR=redis:6379 go run ./cmd/dns-go
 ```
 
-The server handles `SIGINT` and `SIGTERM`, stops accepting DNS requests within
-the configured timeout, and closes the Redis client before exiting.
+The server handles `SIGINT` and `SIGTERM`, stops accepting UDP and TCP DNS
+requests within the configured timeout, and closes the Redis client before
+exiting.
 
 Query it with:
 

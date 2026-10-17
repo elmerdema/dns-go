@@ -9,6 +9,7 @@ import (
 	"syscall"
 
 	"dns-server/internal/dnsserver"
+
 	"github.com/miekg/dns"
 )
 
@@ -46,15 +47,29 @@ func main() {
 
 	mux := dns.NewServeMux()
 	mux.Handle(".", dnsserver.NewHandlerWithConfig(context.Background(), store, config))
-	server := &dns.Server{Addr: config.ListenAddr, Net: "udp", Handler: mux}
+	servers := []*dns.Server{
+		{Addr: config.ListenAddr, Net: "udp", Handler: mux},
+		{Addr: config.ListenAddr, Net: "tcp", Handler: mux},
+	}
 
-	runErr := make(chan error, 1)
-	go func() {
-		if err := server.ListenAndServe(); err != nil {
-			runErr <- err
+	runErr := make(chan error, len(servers))
+	for _, server := range servers {
+		go func(server *dns.Server) {
+			if err := server.ListenAndServe(); err != nil {
+				runErr <- err
+			}
+		}(server)
+	}
+
+	shutdown := func() {
+		shutdownContext, cancel := context.WithTimeout(context.Background(), config.ShutdownTimeout)
+		defer cancel()
+		for _, server := range servers {
+			if err := server.ShutdownContext(shutdownContext); err != nil {
+				log.Printf("failed to shut down %s DNS server: %v", server.Net, err)
+			}
 		}
-		close(runErr)
-	}()
+	}
 
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
@@ -63,14 +78,13 @@ func main() {
 	select {
 	case err := <-runErr:
 		if err != nil {
-			log.Fatalf("DNS server failed: %v", err)
+			log.Printf("DNS server failed: %v", err)
 		}
+		shutdown()
 	case signal := <-signals:
 		log.Printf("received %s, shutting down", signal)
-		shutdownContext, cancel := context.WithTimeout(context.Background(), config.ShutdownTimeout)
-		defer cancel()
-		if err := server.ShutdownContext(shutdownContext); err != nil {
-			log.Printf("failed to shut down DNS server: %v", err)
-		}
+		shutdown()
 	}
 }
+
+//ss
