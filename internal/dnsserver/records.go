@@ -1,6 +1,7 @@
 package dnsserver
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/miekg/dns"
@@ -33,4 +34,21 @@ func NormalizeName(name string) string {
 		name += "."
 	}
 	return name
+}
+
+func ValidateRecord(record Record) error {
+	if strings.TrimSpace(record.Name) == "" {
+		return fmt.Errorf("record name is empty")
+	}
+	name := NormalizeName(record.Name)
+	if _, ok := dns.IsDomainName(name); !ok {
+		return fmt.Errorf("invalid record name %q", record.Name)
+	}
+	if !supportedType(record.Type) {
+		return fmt.Errorf("unsupported record type %d", record.Type)
+	}
+	if _, err := recordRR(record); err != nil {
+		return fmt.Errorf("invalid record %q: %w", name, err)
+	}
+	return nil
 }

@@ -55,11 +55,17 @@ func decodeRecord(value string) (Record, error) {
 		return Record{}, fmt.Errorf("decode DNS record: %w", err)
 	}
 	record.Name = NormalizeName(record.Name)
+	if err := ValidateRecord(record); err != nil {
+		return Record{}, err
+	}
 	return record, nil
 }
 
 func SeedRecords(ctx context.Context, records []Record, store RecordStore) error {
 	for _, record := range records {
+		if err := ValidateRecord(record); err != nil {
+			return fmt.Errorf("validate record %q: %w", record.Name, err)
+		}
 		record.Name = NormalizeName(record.Name)
 		if _, err := store.SetNX(ctx, nameKey(record.Name), "1"); err != nil {
 			return fmt.Errorf("seed %s: %w", nameKey(record.Name), err)
