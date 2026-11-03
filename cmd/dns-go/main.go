@@ -8,9 +8,11 @@ import (
 	"os/signal"
 	"syscall"
 
+	"dns-server/internal/admin"
 	"dns-server/internal/dnsserver"
 
 	"github.com/miekg/dns"
+	"net/http"
 )
 
 func main() {
@@ -51,14 +53,25 @@ func main() {
 		{Addr: config.ListenAddr, Net: "udp", Handler: mux},
 		{Addr: config.ListenAddr, Net: "tcp", Handler: mux},
 	}
+	var adminServer *http.Server
+	if config.AdminEnabled {
+		adminServer = &http.Server{Addr: config.AdminAddr, Handler: admin.NewServer(store, config.AdminToken).Handler()}
+	}
 
-	runErr := make(chan error, len(servers))
+	runErr := make(chan error, len(servers)+1)
 	for _, server := range servers {
 		go func(server *dns.Server) {
 			if err := server.ListenAndServe(); err != nil {
 				runErr <- err
 			}
 		}(server)
+	}
+	if adminServer != nil {
+		go func() {
+			if err := adminServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				runErr <- err
+			}
+		}()
 	}
 
 	shutdown := func() {
@@ -67,6 +80,11 @@ func main() {
 		for _, server := range servers {
 			if err := server.ShutdownContext(shutdownContext); err != nil {
 				log.Printf("failed to shut down %s DNS server: %v", server.Net, err)
+			}
+		}
+		if adminServer != nil {
+			if err := adminServer.Shutdown(shutdownContext); err != nil {
+				log.Printf("failed to shut down admin server: %v", err)
 			}
 		}
 	}
@@ -86,5 +104,3 @@ func main() {
 		shutdown()
 	}
 }
-
-//ss

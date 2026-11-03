@@ -1,0 +1,43 @@
+services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  dns-go:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      DNS_LISTEN_ADDR: 0.0.0.0:8503
+      DNS_REDIS_ADDR: redis:6379
+      DNS_ADMIN_ENABLED: "true"
+      DNS_ADMIN_ADDR: 0.0.0.0:8080
+      DNS_ADMIN_TOKEN: ${DNS_ADMIN_TOKEN:?Set DNS_ADMIN_TOKEN before starting}
+    ports:
+      - "8503:8503/tcp"
+      - "8503:8503/udp"
+      - "8080:8080"
+
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - dns-go
+    ports:
+      - "5173:80"
+
+volumes:
+  redis-data:

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 
 	"github.com/miekg/dns"
 	"github.com/redis/go-redis/v9"
@@ -15,6 +16,14 @@ const recordKeyPrefix = "dns:record:"
 type RecordStore interface {
 	Get(context.Context, string) (string, error)
 	SetNX(context.Context, string, string) (bool, error)
+}
+
+type RecordAdminStore interface {
+	RecordStore
+	ListRecords(context.Context) ([]Record, error)
+	UpsertRecord(context.Context, Record) error
+	DeleteRecord(context.Context, string, uint16) error
+	Ping(context.Context) error
 }
 
 type RedisStore struct {
@@ -31,6 +40,88 @@ func (s RedisStore) Get(ctx context.Context, key string) (string, error) {
 
 func (s RedisStore) SetNX(ctx context.Context, key, value string) (bool, error) {
 	return s.client.SetNX(ctx, key, value, 0).Result()
+}
+
+func (s RedisStore) ListRecords(ctx context.Context) ([]Record, error) {
+	var records []Record
+	var cursor uint64
+	for {
+		keys, next, err := s.client.Scan(ctx, cursor, recordKeyPrefix+"*", 100).Result()
+		if err != nil {
+			return nil, fmt.Errorf("list DNS records: %w", err)
+		}
+		for _, key := range keys {
+			if len(key) >= len(":_name") && key[len(key)-len(":_name"):] == ":_name" {
+				continue
+			}
+			value, err := s.client.Get(ctx, key).Result()
+			if err != nil {
+				return nil, fmt.Errorf("read DNS record %q: %w", key, err)
+			}
+			record, err := decodeRecord(value)
+			if err != nil {
+				return nil, fmt.Errorf("decode DNS record %q: %w", key, err)
+			}
+			records = append(records, record)
+		}
+		cursor = next
+		if cursor == 0 {
+			break
+		}
+	}
+	sort.Slice(records, func(i, j int) bool {
+		if records[i].Name != records[j].Name {
+			return records[i].Name < records[j].Name
+		}
+		return records[i].Type < records[j].Type
+	})
+	return records, nil
+}
+
+func (s RedisStore) UpsertRecord(ctx context.Context, record Record) error {
+	if err := ValidateRecord(record); err != nil {
+		return err
+	}
+	record.Name = NormalizeName(record.Name)
+	value, err := encodeRecord(record)
+	if err != nil {
+		return err
+	}
+	pipe := s.client.TxPipeline()
+	pipe.Set(ctx, nameKey(record.Name), "1", 0)
+	pipe.Set(ctx, RecordKey(record.Name, record.Type), value, 0)
+	if _, err := pipe.Exec(ctx); err != nil {
+		return fmt.Errorf("upsert DNS record: %w", err)
+	}
+	return nil
+}
+
+func (s RedisStore) DeleteRecord(ctx context.Context, name string, recordType uint16) error {
+	name = NormalizeName(name)
+	if !supportedType(recordType) {
+		return fmt.Errorf("unsupported record type %d", recordType)
+	}
+	deleted, err := s.client.Del(ctx, RecordKey(name, recordType)).Result()
+	if err != nil {
+		return fmt.Errorf("delete DNS record: %w", err)
+	}
+	if deleted == 0 {
+		return redis.Nil
+	}
+	keys, err := s.client.Keys(ctx, recordKeyPrefix+name+":*").Result()
+	if err != nil {
+		return fmt.Errorf("check remaining DNS records: %w", err)
+	}
+	if len(keys) == 1 && keys[0] == nameKey(name) {
+		if _, err := s.client.Del(ctx, nameKey(name)).Result(); err != nil {
+			return fmt.Errorf("delete DNS name marker: %w", err)
+		}
+	}
+	return nil
+}
+
+func (s RedisStore) Ping(ctx context.Context) error {
+	return s.client.Ping(ctx).Err()
 }
 
 func RecordKey(name string, recordType uint16) string {

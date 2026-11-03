@@ -18,6 +18,9 @@ func TestLoadConfig(t *testing.T) {
 		"DNS_RECURSION_ENABLED": "true",
 		"DNS_SHUTDOWN_TIMEOUT":  "10s",
 		"DNS_ZONE_FILE":         "records.json",
+		"DNS_ADMIN_ENABLED":     "true",
+		"DNS_ADMIN_ADDR":        "127.0.0.1:9090",
+		"DNS_ADMIN_TOKEN":       "secret-token",
 	}
 	config, err := LoadConfig(func(key string) string { return values[key] })
 	if err != nil {
@@ -26,8 +29,16 @@ func TestLoadConfig(t *testing.T) {
 	if config.ListenAddr != "0.0.0.0:5353" || config.RedisDB != 2 ||
 		config.DefaultTTL != 120 || config.LogLevel != "warn" ||
 		!config.RecursionEnabled || config.ZoneFile != "records.json" ||
-		config.ShutdownTimeout != 10*time.Second {
+		config.ShutdownTimeout != 10*time.Second || !config.AdminEnabled ||
+		config.AdminAddr != "127.0.0.1:9090" || config.AdminToken != "secret-token" {
 		t.Fatalf("LoadConfig() = %+v", config)
+	}
+}
+
+func TestLoadConfigRequiresAdminToken(t *testing.T) {
+	values := map[string]string{"DNS_ADMIN_ENABLED": "true"}
+	if _, err := LoadConfig(func(key string) string { return values[key] }); err == nil {
+		t.Fatal("LoadConfig() succeeded without an admin token")
 	}
 }
 

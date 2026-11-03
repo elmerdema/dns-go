@@ -24,6 +24,9 @@ type Config struct {
 	MaxResponseBytes int
 	ZoneFile         string
 	ShutdownTimeout  time.Duration
+	AdminEnabled     bool
+	AdminAddr        string
+	AdminToken       string
 }
 
 func DefaultConfig() Config {
@@ -37,6 +40,7 @@ func DefaultConfig() Config {
 		RateLimit:        50,
 		RateBurst:        100,
 		MaxResponseBytes: 1232,
+		AdminAddr:        "127.0.0.1:8080",
 	}
 }
 
@@ -46,6 +50,8 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 	config.RedisAddr = envOr(getenv, "DNS_REDIS_ADDR", config.RedisAddr)
 	config.RedisPassword = getenv("DNS_REDIS_PASSWORD")
 	config.ZoneFile = getenv("DNS_ZONE_FILE")
+	config.AdminAddr = envOr(getenv, "DNS_ADMIN_ADDR", config.AdminAddr)
+	config.AdminToken = getenv("DNS_ADMIN_TOKEN")
 	config.LogLevel = strings.ToLower(envOr(getenv, "DNS_LOG_LEVEL", config.LogLevel))
 	if value := getenv("DNS_ALLOWED_CLIENTS"); value != "" {
 		allowed, parseErr := parsePrefixes(value)
@@ -70,6 +76,12 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 		config.RecursionEnabled, err = strconv.ParseBool(value)
 		if err != nil {
 			return Config{}, fmt.Errorf("DNS_RECURSION_ENABLED must be true or false: %w", err)
+		}
+	}
+	if value := getenv("DNS_ADMIN_ENABLED"); value != "" {
+		config.AdminEnabled, err = strconv.ParseBool(value)
+		if err != nil {
+			return Config{}, fmt.Errorf("DNS_ADMIN_ENABLED must be true or false: %w", err)
 		}
 	}
 	if value := getenv("DNS_SHUTDOWN_TIMEOUT"); value != "" {
@@ -103,6 +115,9 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 	}
 	if config.RedisDB < 0 {
 		return Config{}, fmt.Errorf("DNS_REDIS_DB must not be negative")
+	}
+	if config.AdminEnabled && config.AdminToken == "" {
+		return Config{}, fmt.Errorf("DNS_ADMIN_TOKEN must be set when DNS_ADMIN_ENABLED is true")
 	}
 	return config, nil
 }
