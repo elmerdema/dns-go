@@ -1,4 +1,5 @@
 # dns-go
+<img src="./assets/home.png" alt="dns-go admin dashboard" width="640">
 
 ## Project layout
 
@@ -127,6 +128,7 @@ NXDOMAIN from NODATA, and Redis readiness failures return HTTP 503.
 
 The admin dashboard is a Vite React/TypeScript app in [`web`](./web). Start
 the Go server with the admin API enabled, then run:
+
 
 ```text
 cd web
